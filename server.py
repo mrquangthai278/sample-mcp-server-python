@@ -6,6 +6,7 @@ import re
 import os
 import datetime
 from typing import List, Dict, Optional, Any
+import json
 
 import uvicorn
 from starlette.applications import Starlette
@@ -47,108 +48,74 @@ def get_customer_data() -> List[Dict[str, str]]:
 class JLDesignDocumentation:
     """
     A resource that provides access to the JL Design System documentation.
-    Parses the markdown file and provides methods to query components and categories.
+    Parses the JSON file and provides methods to query components and categories.
     """
     
     def __init__(self):
         """Initialize and load the JL Design documentation file."""
         self.components = []
-        self.categories = set()
+        self.categories = {}
+        self.colors = {}
+        self.typography = {}
         self._load_documentation()
     
     def _load_documentation(self):
         """Load and parse the documentation file."""
         try:
-            jl_design_path = os.path.join(os.path.dirname(__file__), "Documentation", "JLDesignDocumentation.md")
+            jl_design_path = os.path.join(os.path.dirname(__file__), "Documentation", "joblogic-design-system.json")
             
             if not os.path.exists(jl_design_path):
                 raise FileNotFoundError(f"JL Design documentation file not found at {jl_design_path}")
-                
-            with open(jl_design_path, "r", encoding="utf-8") as f:
-                content = f.read()
             
-            # Extract component sections
-            # Components are defined under level 3 headings (###)
-            component_sections = re.split(r'### ([A-Za-z]+)', content)[1:]  # Skip the intro part
+            # Try different encodings to handle potential BOM or different encoding formats
+            encodings_to_try = ['utf-8-sig', 'utf-16', 'utf-16-le', 'utf-16-be', 'utf-8']
+            design_system = None
             
-            # Process the sections in pairs (component name and its content)
-            for i in range(0, len(component_sections), 2):
-                if i+1 >= len(component_sections):
-                    break
+            for encoding in encodings_to_try:
+                try:
+                    with open(jl_design_path, "r", encoding=encoding) as f:
+                        content = f.read()
+                        # Remove any potential BOM from the beginning
+                        if content.startswith('\ufeff'):
+                            content = content[1:]
+                        design_system = json.loads(content)
+                    break  # If successful, break the loop
+                except UnicodeDecodeError:
+                    continue  # Try the next encoding
+                except json.JSONDecodeError:
+                    continue  # Try the next encoding
+            
+            if design_system is None:
+                # If all encodings fail, try binary mode + auto-detection
+                with open(jl_design_path, "rb") as f:
+                    raw_data = f.read()
+                    # Try to detect BOM
+                    if raw_data.startswith(b'\xff\xfe') or raw_data.startswith(b'\xfe\xff'):
+                        content = raw_data.decode('utf-16')
+                    else:
+                        content = raw_data.decode('utf-8', errors='ignore')
                     
-                comp_name = component_sections[i].strip()
-                comp_content = component_sections[i+1].strip()
+                    design_system = json.loads(content)
+            
+            # Process categories and components
+            if "categories" in design_system:
+                self.categories = design_system["categories"]
                 
-                # Extract category by looking at which section this component is mentioned in
-                comp_category = None
-                category_patterns = [
-                    (r"Layout Components", "Layout Components"),
-                    (r"Form Components", "Form Components"),
-                    (r"Data Display Components", "Data Display Components"),
-                    (r"Feedback Components", "Feedback Components"),
-                    (r"Navigation Components", "Navigation Components"),
-                    (r"Overlay Components", "Overlay Components"),
-                    (r"Utility Components", "Utility Components")
-                ]
+                # Extract all components from categories
+                for category_key, category in design_system["categories"].items():
+                    if "components" in category:
+                        for component in category["components"]:
+                            # Add category key to component for reference
+                            component["category"] = category["name"]
+                            self.components.append(component)
+            
+            # Store colors and typography information
+            if "colors" in design_system:
+                self.colors = design_system["colors"]
                 
-                for pattern, cat_name in category_patterns:
-                    if re.search(pattern, content, re.IGNORECASE):
-                        comp_section = content.split(f"### {comp_name}")[0]
-                        if re.search(pattern, comp_section, re.IGNORECASE):
-                            comp_category = cat_name
-                            if comp_category:
-                                self.categories.add(comp_category)
-                            break
-                    
-                # Extract props from a props table if it exists
-                props = []
-                props_match = re.search(r'#### Props\s+\|([^\|]+)\|([^\|]+)\|([^\|]+)\|([^\|]+)\|\s+\|[-\|]+\s+((?:\|[^\n]+\n)+)', comp_content, re.MULTILINE)
+            if "typography" in design_system:
+                self.typography = design_system["typography"]
                 
-                if props_match:
-                    props_content = props_match.group(5)
-                    for prop_line in props_content.strip().split('\n'):
-                        prop_parts = [p.strip() for p in prop_line.split('|')[1:-1]]
-                        if len(prop_parts) >= 4:
-                            props.append({
-                                "name": prop_parts[0],
-                                "type": prop_parts[1],
-                                "default": prop_parts[2],
-                                "description": prop_parts[3]
-                            })
-                
-                # Extract events
-                events = []
-                events_match = re.search(r'#### Events\s+\|([^\|]+)\|([^\|]+)\|([^\|]+)\|\s+\|[-\|]+\s+((?:\|[^\n]+\n)+)', comp_content, re.MULTILINE)
-                
-                if events_match:
-                    events_content = events_match.group(4)
-                    for event_line in events_content.strip().split('\n'):
-                        event_parts = [p.strip() for p in event_line.split('|')[1:-1]]
-                        if len(event_parts) >= 3:
-                            events.append({
-                                "name": event_parts[0],
-                                "payload": event_parts[1],
-                                "description": event_parts[2]
-                            })
-                
-                # Extract usage example
-                usage_example = None
-                usage_match = re.search(r'#### Usage\s+```vue\s+(.*?)```', comp_content, re.DOTALL)
-                if usage_match:
-                    usage_example = usage_match.group(1).strip()
-                
-                # Compile the component information
-                component_info = {
-                    "name": comp_name,
-                    "category": comp_category,
-                    "description": comp_content.split('\n\n')[0].strip() if comp_content else "",
-                    "props": props,
-                    "events": events,
-                    "usage_example": usage_example
-                }
-                
-                self.components.append(component_info)
-        
         except Exception as e:
             print(f"Error loading JL Design documentation: {str(e)}")
             # Don't raise here, just log the error
@@ -201,7 +168,25 @@ class JLDesignDocumentation:
         Returns:
             A list of all categories.
         """
-        return list(self.categories)
+        return [category["name"] for category in self.categories.values()]
+    
+    def get_colors(self) -> Dict[str, Any]:
+        """
+        Get color definitions.
+        
+        Returns:
+            A dictionary of color information.
+        """
+        return self.colors
+    
+    def get_typography(self) -> Dict[str, Any]:
+        """
+        Get typography definitions.
+        
+        Returns:
+            A dictionary of typography information.
+        """
+        return self.typography
 
 @mcp.tool()
 async def get_customer_info(name: Optional[str] = None, context=None) -> Dict[str, Any]:
@@ -261,7 +246,7 @@ def get_jl_design_info(component_name: Optional[str] = None, category: Optional[
     try:
         # Instead of trying to access the resource through the registry,
         # recreate the parsing logic directly in the tool
-        jl_design_path = os.path.join(os.path.dirname(__file__), "Documentation", "JLDesignDocumentation.md")
+        jl_design_path = os.path.join(os.path.dirname(__file__), "Documentation", "joblogic-design-system.json")
         
         if not os.path.exists(jl_design_path):
             raise FileNotFoundError(f"JL Design documentation file not found at {jl_design_path}")
@@ -344,6 +329,49 @@ def text_summarize(text: str, max_sentences: int = 3) -> str:
         
     except ValueError as e:
         raise McpError(ErrorData(INVALID_PARAMS, str(e))) from e
+    except Exception as e:
+        raise McpError(ErrorData(INTERNAL_ERROR, f"Unexpected error: {str(e)}")) from e
+
+@mcp.tool()
+def get_frontend_guidelines() -> Dict[str, Any]:
+    """
+    Retrieve frontend development guidelines to help code generation agents 
+    like GitHub Copilot, Cursor, etc. follow the company's coding standards.
+    
+    Returns:
+        A dictionary containing frontend development guidelines and rules
+        
+    Usage:
+        get_frontend_guidelines()
+    """
+    try:
+        # Path to the frontend rules documentation
+        rules_path = os.path.join(os.path.dirname(__file__), "Documentation", "FrontendRules.md")
+        
+        if not os.path.exists(rules_path):
+            raise FileNotFoundError(f"Frontend rules documentation not found at {rules_path}")
+            
+        # Read the rules file
+        with open(rules_path, "r", encoding="utf-8") as f:
+            rules_content = f.read()
+        
+        # Parse the rules (currently it's a simple format with bullet points)
+        rules = []
+        for line in rules_content.split('\n'):
+            line = line.strip()
+            if line.startswith('- '):
+                rules.append(line[2:])
+            
+        # Simply return the rules as defined in the documentation
+        result = {
+            "rules": rules,
+            "source": "FrontendRules.md"
+        }
+        
+        return result
+        
+    except FileNotFoundError as e:
+        raise McpError(ErrorData(INTERNAL_ERROR, str(e))) from e
     except Exception as e:
         raise McpError(ErrorData(INTERNAL_ERROR, f"Unexpected error: {str(e)}")) from e
 
