@@ -1,1 +1,2 @@
-- Just use inline styles.
+- Use **Vue 2 Option API** style (not Composition API)
+- Use native HTML elements (no external component libraries)

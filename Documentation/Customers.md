@@ -1,2 +1,0 @@
-- Phạm Quang Thái, sinh năm 1996. Một Frontend developer cùi bắp.
-- Lê Văn Vũ, sinh năm 2000. Một Backend developer xịn.

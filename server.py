@@ -24,25 +24,6 @@ mcp = FastMCP("sample")
 # Dictionary to store cached webpage data
 webpage_cache = {}
 
-# Register CustomerData as an MCP resource
-@mcp.resource("customers://data")
-def get_customer_data() -> List[Dict[str, str]]:
-    """
-    A resource that provides access to customer data in JSON format.
-    """
-    return [
-        {
-            "name": "Phạm Quang Thái",
-            "age": "24 tuổi",
-            "role": "Frontend"
-        },
-        {
-            "name": "Lê Lân",
-            "age": "24 tuổi",
-            "role": "Fullstack"
-        },
-    ]
-
 # Register JLDesignDocumentation.md as an MCP resource
 @mcp.resource("design://jl-components")
 class JLDesignDocumentation:
@@ -188,44 +169,368 @@ class JLDesignDocumentation:
         """
         return self.typography
 
-@mcp.tool()
-async def get_customer_info(name: Optional[str] = None, context=None) -> Dict[str, Any]:
+# Register JLInternalAPIDocumentation as an MCP resource
+@mcp.resource("api://jl-internal-api")
+class JLInternalAPIDocumentation:
     """
-    Retrieve customer information from the customers://data resource.
+    A resource that provides access to the Joblogic Internal API documentation.
+    Parses the OpenAPI specification file and provides methods to query endpoints, paths, and schemas.
+    """
+    
+    def __init__(self):
+        """Initialize and load the Joblogic Internal API documentation file."""
+        self.api_spec = {}
+        self.paths = {}
+        self.schemas = {}
+        self.tags = set()
+        self._load_documentation()
+    
+    def _load_documentation(self):
+        """Load and parse the documentation file."""
+        try:
+            api_spec_path = os.path.join(os.path.dirname(__file__), "Documentation", "joblogic-internal-api.json")
+            
+            if not os.path.exists(api_spec_path):
+                raise FileNotFoundError(f"Joblogic Internal API documentation file not found at {api_spec_path}")
+            
+            # Try different encodings to handle potential BOM or different encoding formats
+            encodings_to_try = ['utf-8-sig', 'utf-16', 'utf-16-le', 'utf-16-be', 'utf-8']
+            api_spec = None
+            
+            for encoding in encodings_to_try:
+                try:
+                    with open(api_spec_path, "r", encoding=encoding) as f:
+                        content = f.read()
+                        # Remove any potential BOM from the beginning
+                        if content.startswith('\ufeff'):
+                            content = content[1:]
+                        api_spec = json.loads(content)
+                    break  # If successful, break the loop
+                except UnicodeDecodeError:
+                    continue  # Try the next encoding
+                except json.JSONDecodeError:
+                    continue  # Try the next encoding
+            
+            if api_spec is None:
+                # If all encodings fail, try binary mode + auto-detection
+                with open(api_spec_path, "rb") as f:
+                    raw_data = f.read()
+                    # Try to detect BOM
+                    if raw_data.startswith(b'\xff\xfe') or raw_data.startswith(b'\xfe\xff'):
+                        content = raw_data.decode('utf-16')
+                    else:
+                        content = raw_data.decode('utf-8', errors='ignore')
+                    
+                    api_spec = json.loads(content)
+            
+            self.api_spec = api_spec
+            
+            # Process paths, schemas and tags
+            if "paths" in api_spec:
+                self.paths = api_spec["paths"]
+                
+                # Extract all tags from paths
+                for path, methods in self.paths.items():
+                    for method, details in methods.items():
+                        if isinstance(details, dict) and "tags" in details:
+                            for tag in details["tags"]:
+                                self.tags.add(tag)
+            
+            if "components" in api_spec and "schemas" in api_spec["components"]:
+                self.schemas = api_spec["components"]["schemas"]
+                
+        except Exception as e:
+            print(f"Error loading Joblogic Internal API documentation: {str(e)}")
+            # Don't raise here, just log the error
+    
+    def get_api_info(self) -> Dict[str, Any]:
+        """
+        Get basic API information (title, version).
+        
+        Returns:
+            A dictionary with API information.
+        """
+        if "info" in self.api_spec:
+            return self.api_spec["info"]
+        return {}
+    
+    def get_all_tags(self) -> List[str]:
+        """
+        Get all API tags/categories.
+        
+        Returns:
+            A list of all tags.
+        """
+        return list(self.tags)
+    
+    def get_endpoints_by_tag(self, tag: str) -> List[Dict[str, Any]]:
+        """
+        Get all endpoints for a specific tag.
+        
+        Args:
+            tag: The tag to filter by.
+            
+        Returns:
+            A list of endpoints (path, method, operationId) for the specified tag.
+        """
+        result = []
+        
+        for path, methods in self.paths.items():
+            for method, details in methods.items():
+                if isinstance(details, dict) and "tags" in details and tag in details["tags"]:
+                    endpoint = {
+                        "path": path,
+                        "method": method.upper(),
+                        "operationId": details.get("operationId", ""),
+                        "summary": details.get("summary", ""),
+                        "description": details.get("description", "")
+                    }
+                    result.append(endpoint)
+        
+        return result
+    
+    def get_endpoint_details(self, path: str, method: str) -> Optional[Dict[str, Any]]:
+        """
+        Get detailed information about a specific endpoint.
+        
+        Args:
+            path: The API path.
+            method: The HTTP method (GET, POST, etc.)
+            
+        Returns:
+            A dictionary with endpoint details or None if not found.
+        """
+        method = method.lower()
+        if path in self.paths and method in self.paths[path]:
+            return self.paths[path][method]
+        return None
+    
+    def get_schema(self, schema_name: str) -> Optional[Dict[str, Any]]:
+        """
+        Get schema information for a specific schema name.
+        
+        Args:
+            schema_name: The name of the schema to retrieve.
+            
+        Returns:
+            A dictionary with schema details or None if not found.
+        """
+        if schema_name in self.schemas:
+            return self.schemas[schema_name]
+        return None
+    
+    def search_endpoints(self, query: str) -> List[Dict[str, Any]]:
+        """
+        Search for endpoints matching the query in path or operationId.
+        
+        Args:
+            query: The search query.
+            
+        Returns:
+            A list of matching endpoints.
+        """
+        query = query.lower()
+        result = []
+        
+        for path, methods in self.paths.items():
+            path_lower = path.lower()
+            
+            for method, details in methods.items():
+                if not isinstance(details, dict):
+                    continue
+                    
+                operation_id = details.get("operationId", "").lower()
+                description = details.get("description", "").lower()
+                summary = details.get("summary", "").lower()
+                
+                if (query in path_lower or 
+                    query in operation_id or 
+                    query in description or 
+                    query in summary):
+                    
+                    endpoint = {
+                        "path": path,
+                        "method": method.upper(),
+                        "operationId": details.get("operationId", ""),
+                        "summary": details.get("summary", ""),
+                        "description": details.get("description", "")
+                    }
+                    result.append(endpoint)
+        
+        return result
+
+# Register the tool to query Joblogic Internal API information
+@mcp.tool()
+def get_internal_api_info(tag: Optional[str] = None, search_query: Optional[str] = None, path: Optional[str] = None, method: Optional[str] = None) -> Dict[str, Any]:
+    """
+    Query information from the Joblogic Internal API documentation to help agents
+    implement features that integrate with this microservice.
     
     Args:
-        name: Optional name to filter for a specific customer
-        context: The MCP context (automatically injected)
+        tag: Optional tag name to filter endpoints by a specific category (e.g., "Job", "Customer", "Invoice")
+        search_query: Optional search term to find relevant endpoints
+        path: Optional specific API path to get details for (e.g., "/api/tenancy/{tenantId}/job")
+        method: Optional HTTP method to use with path parameter (e.g., "GET", "POST")
         
     Returns:
-        A dictionary with customer information
+        A dictionary with information about the Joblogic Internal API
         
     Usage:
-        get_customer_info("Phạm Quang Thái")
-        get_customer_info()  # Returns all customers
+        get_internal_api_info(tag="Job")  # Return all Job-related endpoints
+        get_internal_api_info(search_query="customer")  # Search for endpoints related to customers
+        get_internal_api_info(path="/api/tenancy/{tenantId}/job", method="POST")  # Get details for a specific endpoint
+        get_internal_api_info()  # Return general API information and available tags
     """
     try:
-        # Get customer data from the MCP resource using read_resource
-        customers_data = get_customer_data()
+        # Create a JLInternalAPIDocumentation instance directly
+        api_doc = JLInternalAPIDocumentation()
         
-        # Filter by name if provided
-        if name:
-            filtered_customers = []
-            for customer in customers_data:
-                if name.lower() in customer["name"].lower():
-                    filtered_customers.append(customer)
-            
-            if not filtered_customers:
-                return {"message": f"No customer found with name containing '{name}'"}
-            
-            return {"customers": filtered_customers}
+        # Handle different query types
+        if path and method:
+            # Get specific endpoint details
+            endpoint_details = api_doc.get_endpoint_details(path, method)
+            if not endpoint_details:
+                return {"message": f"No endpoint found for {method} {path}"}
+            return {"endpoint": endpoint_details}
         
-        # Return all customers if no name filter
-        return {"customers": customers_data}
+        if tag:
+            # Get endpoints for a specific tag
+            endpoints = api_doc.get_endpoints_by_tag(tag)
+            if not endpoints:
+                return {"message": f"No endpoints found for tag '{tag}'"}
+            return {"tag": tag, "endpoints": endpoints}
+        
+        if search_query:
+            # Search for endpoints
+            endpoints = api_doc.search_endpoints(search_query)
+            if not endpoints:
+                return {"message": f"No endpoints found matching '{search_query}'"}
+            return {"search_query": search_query, "endpoints": endpoints}
+        
+        # Default: return API info and available tags
+        api_info = api_doc.get_api_info()
+        tags = api_doc.get_all_tags()
+        
+        return {
+            "api_info": api_info,
+            "available_tags": tags,
+            "message": "Use the 'tag', 'search_query', or 'path'+'method' parameters to get more specific information."
+        }
         
     except Exception as e:
         raise McpError(ErrorData(INTERNAL_ERROR, f"Unexpected error: {str(e)}")) from e
 
+# Register the tool to guide code generation for Joblogic Internal API integration
+@mcp.tool()
+def guide_backend_implementation(feature_description: str, endpoints_needed: Optional[List[str]] = None) -> Dict[str, Any]:
+    """
+    Provides guidance for implementing new backend features that integrate with the 
+    Joblogic Internal API microservice.
+    
+    Args:
+        feature_description: Description of the feature to implement
+        endpoints_needed: Optional list of specific endpoints that will be used
+        
+    Returns:
+        A dictionary containing implementation guidance and best practices
+        
+    Usage:
+        guide_backend_implementation("Create an endpoint to list all jobs with pagination")
+        guide_backend_implementation("Implement invoice payment processing")
+    """
+    try:
+        # Create a JLInternalAPIDocumentation instance
+        api_doc = JLInternalAPIDocumentation()
+        
+        # Extract keywords from feature description to suggest relevant endpoints
+        keywords = extract_keywords(feature_description.lower())
+        
+        suggested_endpoints = []
+        relevant_tags = set()
+        
+        # Search for relevant endpoints based on keywords
+        for keyword in keywords:
+            endpoints = api_doc.search_endpoints(keyword)
+            for endpoint in endpoints:
+                # Check if this is a new endpoint suggestion
+                is_new = True
+                for existing in suggested_endpoints:
+                    if (existing["path"] == endpoint["path"] and 
+                        existing["method"] == endpoint["method"]):
+                        is_new = False
+                        break
+                
+                if is_new:
+                    suggested_endpoints.append(endpoint)
+                    
+                    # Track relevant tags
+                    endpoint_details = api_doc.get_endpoint_details(endpoint["path"], endpoint["method"])
+                    if endpoint_details and "tags" in endpoint_details:
+                        for tag in endpoint_details["tags"]:
+                            relevant_tags.add(tag)
+        
+        # For specific endpoints requested, get their details
+        specific_endpoints = []
+        if endpoints_needed:
+            for endpoint_str in endpoints_needed:
+                if " " in endpoint_str:
+                    method, path = endpoint_str.split(" ", 1)
+                    endpoint_details = api_doc.get_endpoint_details(path.strip(), method.strip())
+                    if endpoint_details:
+                        specific_endpoints.append({
+                            "path": path.strip(),
+                            "method": method.strip(),
+                            "details": endpoint_details
+                        })
+        
+        # Compile guidance
+        best_practices = [
+            "Always include the tenantId parameter when calling tenancy-specific endpoints",
+            "Use proper error handling to catch and process API errors",
+            "Consider implementing a retry mechanism for transient failures",
+            "Use DTOs to map between your application models and the API request/response models",
+            "Log all API calls for debugging and monitoring purposes",
+            "Cache responses when appropriate to reduce API calls"
+        ]
+        
+        implementation_steps = [
+            "1. Create interface/models that match the API request/response structures",
+            "2. Implement a service to handle HTTP communication with the API",
+            "3. Create controllers or handlers that use the service to fetch/send data",
+            "4. Implement error handling and validation",
+            "5. Add unit tests simulating API responses"
+        ]
+        
+        result = {
+            "feature": feature_description,
+            "best_practices": best_practices,
+            "implementation_steps": implementation_steps,
+            "relevant_tags": list(relevant_tags)
+        }
+        
+        if suggested_endpoints:
+            result["suggested_endpoints"] = suggested_endpoints[:10]  # Limit to top 10
+            
+        if specific_endpoints:
+            result["specific_endpoints"] = specific_endpoints
+            
+        return result
+        
+    except Exception as e:
+        raise McpError(ErrorData(INTERNAL_ERROR, f"Unexpected error: {str(e)}")) from e
+
+def extract_keywords(text):
+    """Extract keywords from text, removing common words."""
+    # Common words to exclude
+    common_words = {"a", "an", "the", "to", "and", "or", "of", "in", "for", "with", "on", "at", "by", "from"}
+    
+    # Split text into words and filter out common words
+    words = text.lower().split()
+    keywords = [word for word in words if word not in common_words and len(word) > 2]
+    
+    return keywords
+
+# Register the tool to fetch JL Design System information
 @mcp.tool()
 def get_jl_design_info(component_name: Optional[str] = None, category: Optional[str] = None) -> Dict[str, Any]:
     """
@@ -271,67 +576,7 @@ def get_jl_design_info(component_name: Optional[str] = None, category: Optional[
     except Exception as e:
         raise McpError(ErrorData(INTERNAL_ERROR, f"Unexpected error: {str(e)}")) from e
 
-@mcp.tool()
-def text_summarize(text: str, max_sentences: int = 3) -> str:
-    """
-    Summarize a text by extracting the most important sentences.
-    
-    Args:
-        text: The text to summarize
-        max_sentences: Maximum number of sentences to include in the summary (default: 3)
-        
-    Returns:
-        A string containing the summarized text.
-        
-    Usage:
-        text_summarize("Long article text here...", 2)
-    """
-    try:
-        if not text or len(text.strip()) == 0:
-            raise ValueError("Text cannot be empty")
-            
-        if max_sentences < 1:
-            raise ValueError("max_sentences must be at least 1")
-            
-        # Split text into sentences
-        sentences = re.split(r'(?<=[.!?])\s+', text)
-        if not sentences:
-            return text
-            
-        # Calculate word frequency (simple algorithm)
-        word_freq = {}
-        for sentence in sentences:
-            for word in re.findall(r'\w+', sentence.lower()):
-                if len(word) > 3:  # Skip short words
-                    word_freq[word] = word_freq.get(word, 0) + 1
-                    
-        # Calculate sentence scores based on word frequency
-        sentence_scores = []
-        for i, sentence in enumerate(sentences):
-            score = 0
-            for word in re.findall(r'\w+', sentence.lower()):
-                if len(word) > 3:
-                    score += word_freq.get(word, 0)
-            # Normalize by sentence length with a minimum to avoid division by zero
-            divisor = max(len(re.findall(r'\w+', sentence)), 1)
-            sentence_scores.append((i, score / divisor))
-            
-        # Get the top N sentences
-        top_sentences = sorted(sentence_scores, key=lambda x: x[1], reverse=True)[:max_sentences]
-        top_sentences = sorted(top_sentences, key=lambda x: x[0])  # Sort by original order
-        
-        # Combine the top sentences
-        summary = " ".join([sentences[i] for i, _ in top_sentences])
-        
-        print(f"Summary: {summary}")
-
-        return summary
-        
-    except ValueError as e:
-        raise McpError(ErrorData(INVALID_PARAMS, str(e))) from e
-    except Exception as e:
-        raise McpError(ErrorData(INTERNAL_ERROR, f"Unexpected error: {str(e)}")) from e
-
+# Register the tool to fetch frontend development guidelines
 @mcp.tool()
 def get_frontend_guidelines() -> Dict[str, Any]:
     """
