@@ -620,6 +620,64 @@ def get_frontend_guidelines() -> Dict[str, Any]:
     except Exception as e:
         raise McpError(ErrorData(INTERNAL_ERROR, f"Unexpected error: {str(e)}")) from e
 
+# Register the tool to fetch backend development guidelines
+@mcp.tool()
+def get_backend_guidelines() -> Dict[str, Any]:
+    """
+    Retrieve backend development guidelines to help code generation agents 
+    like GitHub Copilot, Cursor, etc. follow the company's coding standards.
+    
+    Returns:
+        A dictionary containing backend development guidelines and rules
+        
+    Usage:
+        get_backend_guidelines()
+    """
+    try:
+        # Path to the backend rules documentation
+        rules_path = os.path.join(os.path.dirname(__file__), "Documentation", "BackendRules.md")
+        
+        if not os.path.exists(rules_path):
+            raise FileNotFoundError(f"Backend rules documentation not found at {rules_path}")
+            
+        # Read the rules file
+        with open(rules_path, "r", encoding="utf-8") as f:
+            rules_content = f.read()
+        
+        # Parse the rules from the markdown structure
+        sections = {}
+        current_section = "General"
+        rules = []
+        
+        for line in rules_content.split('\n'):
+            line = line.strip()
+            
+            # Handle section headers (## Section Name)
+            if line.startswith('## '):
+                current_section = line[3:].strip()
+                sections[current_section] = []
+            # Handle rules (- Rule text)
+            elif line.startswith('- '):
+                rule_text = line[2:]
+                if current_section in sections:
+                    sections[current_section].append(rule_text)
+                else:
+                    rules.append(rule_text)
+        
+        # Prepare the result
+        result = {
+            "rules": rules,
+            "sections": sections,
+            "source": "BackendRules.md"
+        }
+        
+        return result
+        
+    except FileNotFoundError as e:
+        raise McpError(ErrorData(INTERNAL_ERROR, str(e))) from e
+    except Exception as e:
+        raise McpError(ErrorData(INTERNAL_ERROR, f"Unexpected error: {str(e)}")) from e
+
 # Helper functions for webpage fetching and parsing
 async def fetch_webpage(url: str) -> Dict[str, Any]:
     """
