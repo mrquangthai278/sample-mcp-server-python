@@ -7,6 +7,7 @@ import os
 import datetime
 from typing import List, Dict, Optional, Any
 import json
+import sys
 
 import uvicorn
 from starlette.applications import Starlette
@@ -678,6 +679,315 @@ def get_backend_guidelines() -> Dict[str, Any]:
     except Exception as e:
         raise McpError(ErrorData(INTERNAL_ERROR, f"Unexpected error: {str(e)}")) from e
 
+# Register the tool to generate feature code
+@mcp.tool()
+def generate_feature_code(feature_description: str, frontend_needs: Optional[List[str]] = None, backend_endpoints_needed: Optional[List[str]] = None) -> Dict[str, Any]:
+    """
+    Provides comprehensive guidance for implementing a new feature with both frontend and backend components,
+    ensuring the code follows Joblogic's coding standards and best practices.
+    
+    Args:
+        feature_description: Detailed description of the feature to implement
+        frontend_needs: Optional list of frontend components or requirements
+        backend_endpoints_needed: Optional list of backend endpoints that will be used
+        
+    Returns:
+        A dictionary containing implementation guidance for both frontend and backend
+        
+    Usage:
+        generate_feature_code("Add a dashboard to display active jobs with filtering options")
+        generate_feature_code(
+            "Implement a form to create new customer invoices", 
+            frontend_needs=["Form components", "Validation"],
+            backend_endpoints_needed=["POST /api/tenancy/{tenantId}/invoice"]
+        )
+    """
+    try:
+        # Enhance feature description to always include frontend and backend requirements
+        enhanced_description = feature_description
+        if "frontend" not in feature_description.lower() and "backend" not in feature_description.lower():
+            enhanced_description = f"{feature_description} with both frontend Vue components and backend API endpoints"
+        
+        # Generate default frontend needs if none provided
+        if not frontend_needs:
+            # Extract potential frontend component needs from the feature description
+            potential_needs = []
+            if "table" in feature_description.lower() or "list" in feature_description.lower() or "display" in feature_description.lower():
+                potential_needs.append("Table Components")
+            if "form" in feature_description.lower() or "input" in feature_description.lower() or "create" in feature_description.lower() or "edit" in feature_description.lower():
+                potential_needs.append("Form Components")
+                potential_needs.append("Validation")
+            if "filter" in feature_description.lower() or "search" in feature_description.lower():
+                potential_needs.append("Filter Components")
+            if "dashboard" in feature_description.lower() or "chart" in feature_description.lower() or "graph" in feature_description.lower():
+                potential_needs.append("Chart Components")
+            
+            # If nothing specific was detected, add some default components
+            if not potential_needs:
+                potential_needs = ["Basic UI Components"]
+                
+            frontend_needs = potential_needs
+        
+        # Step 1: Get backend guidance by calling the existing tool
+        backend_guide = guide_backend_implementation(
+            feature_description=enhanced_description,
+            endpoints_needed=backend_endpoints_needed
+        )
+        
+        # Step 2: Get frontend rules by calling the existing tool
+        frontend_rules = get_frontend_guidelines()
+        
+        # Step 3: Get backend rules by calling the existing tool
+        backend_rules = get_backend_guidelines()
+        
+        # Step 4: Enhance with design system components if needed
+        design_components = []
+        if frontend_needs:
+            for component_need in frontend_needs:
+                # Try to find matching components in the design system
+                if "component" in component_need.lower():
+                    category = component_need.replace("components", "").strip()
+                    components_info = get_jl_design_info(category=category)
+                    if "components" in components_info:
+                        design_components.extend(components_info["components"])
+        
+        # Step 5: Create a comprehensive implementation plan with Vite integration
+        frontend_implementation_steps = [
+            "1. Create Vue component files following the Option API pattern",
+            "2. Implement the required UI components using native HTML elements",
+            "3. Set up proper data structures and computed properties",
+            "4. Implement methods for API communication",
+            "5. Add proper error handling and loading states",
+            "6. Implement form validation if needed",
+            "7. Add unit tests with Vitest for the component",
+            "8. Configure proper Vite build settings for optimization"
+        ]
+        
+        frontend_api_integration = [
+            "1. Create a dedicated API service file to handle all requests",
+            "2. Implement proper error handling for API responses",
+            "3. Add loading indicators during API calls",
+            "4. Use computed properties to format API data for display",
+            "5. Create reusable mixins for common API functionality"
+        ]
+        
+        vite_configuration_guidelines = [
+            "1. Use environment variables for API endpoints (import.meta.env)",
+            "2. Configure proper code splitting in vite.config.js",
+            "3. Set up optimized asset handling for production builds",
+            "4. Configure Vitest for component testing",
+            "5. Use ESBuild for faster development and production builds"
+        ]
+        
+        # Step 6: Generate code templates based on the requirements
+        vue_component_template = """
+<template>
+  <div class="feature-container">
+    <!-- UI components go here -->
+    <div v-if="isLoading" class="loading-indicator">Loading...</div>
+    <div v-else-if="error" class="error-message">{{ error }}</div>
+    <div v-else class="content">
+      <!-- Main content here -->
+    </div>
+  </div>
+</template>
+
+<script>
+export default {
+  name: 'FeatureName', // Replace with actual feature name
+  data() {
+    return {
+      isLoading: false,
+      error: null,
+      // Data properties
+    };
+  },
+  computed: {
+    // Computed properties
+  },
+  methods: {
+    async fetchData() {
+      try {
+        this.isLoading = true;
+        this.error = null;
+        // API call implementation using environment variables
+        const apiUrl = import.meta.env.VITE_API_URL;
+        // API call implementation
+      } catch (error) {
+        this.error = 'Failed to load data: ' + error.message;
+        console.error(error);
+      } finally {
+        this.isLoading = false;
+      }
+    }
+  },
+  created() {
+    this.fetchData();
+  }
+};
+</script>
+
+<style scoped>
+/* Styles go here */
+</style>
+"""
+
+        vite_config_template = """
+import { defineConfig } from 'vite'
+import vue from '@vitejs/plugin-vue'
+import { fileURLToPath, URL } from 'node:url'
+
+// https://vitejs.dev/config/
+export default defineConfig({
+  plugins: [
+    vue({
+      template: {
+        compilerOptions: {
+          // Vue options here
+        }
+      }
+    }),
+  ],
+  resolve: {
+    alias: {
+      '@': fileURLToPath(new URL('./src', import.meta.url))
+    }
+  },
+  build: {
+    // Production build optimization
+    minify: 'esbuild',
+    rollupOptions: {
+      output: {
+        manualChunks: {
+          // Code splitting configuration
+          vendor: ['vue'],
+          // Add other common dependencies
+        }
+      }
+    }
+  },
+  test: {
+    // Vitest configuration
+    globals: true,
+    environment: 'jsdom',
+  }
+})
+"""
+
+        vitest_test_template = """
+import { mount } from '@vue/test-utils'
+import { describe, it, expect, beforeEach, vi } from 'vitest'
+import FeatureName from './FeatureName.vue'
+
+describe('FeatureName', () => {
+  let wrapper;
+  
+  beforeEach(() => {
+    // Mock API calls
+    vi.mock('@/services/api', () => ({
+      fetchData: vi.fn().mockResolvedValue({ data: [] })
+    }))
+    
+    wrapper = mount(FeatureName)
+  })
+  
+  it('renders correctly', () => {
+    expect(wrapper.find('.feature-container').exists()).toBe(true)
+  })
+  
+  it('shows loading state initially', () => {
+    expect(wrapper.find('.loading-indicator').exists()).toBe(true)
+  })
+  
+  it('displays content when data is loaded', async () => {
+    await wrapper.vm.$nextTick()
+    await wrapper.vm.$nextTick() // Wait for async operations
+    expect(wrapper.find('.content').exists()).toBe(true)
+  })
+})
+"""
+
+        backend_route_template = """
+from flask import request, jsonify
+import requests
+from .utils import handle_errors
+
+@app.route('/api/feature-endpoint', methods=['GET', 'POST'])
+@handle_errors
+def feature_endpoint():
+    # Get tenant ID from request
+    tenant_id = request.headers.get('X-Tenant-ID')
+    if not tenant_id:
+        return jsonify({"error": "Missing tenant ID"}), 400
+        
+    # Forward request to internal API
+    internal_api_url = f"https://internal-api/tenancy/{tenant_id}/resource"
+    
+    if request.method == 'GET':
+        # Handle GET request
+        response = requests.get(
+            internal_api_url,
+            headers={"Authorization": request.headers.get('Authorization')}
+        )
+        return jsonify(response.json()), response.status_code
+    
+    elif request.method == 'POST':
+        # Handle POST request
+        response = requests.post(
+            internal_api_url,
+            json=request.json,
+            headers={"Authorization": request.headers.get('Authorization')}
+        )
+        return jsonify(response.json()), response.status_code
+"""
+
+        # Step 7: Combine everything into a comprehensive response
+        result = {
+            "feature": feature_description,
+            "implementation_plan": {
+                "frontend": {
+                    "guidelines": frontend_rules.get("rules", []),
+                    "required_components": frontend_needs,
+                    "implementation_steps": frontend_implementation_steps,
+                    "api_integration": frontend_api_integration,
+                    "vite_configuration": vite_configuration_guidelines,
+                    "component_template": vue_component_template,
+                    "vite_config_template": vite_config_template,
+                    "test_template": vitest_test_template
+                },
+                "backend": {
+                    "guidelines": backend_rules.get("rules", []),
+                    "sections": backend_rules.get("sections", {}),
+                    "implementation_steps": backend_guide.get("implementation_steps", []),
+                    "best_practices": backend_guide.get("best_practices", []),
+                    "route_template": backend_route_template
+                },
+                "integration_testing": [
+                    "1. Test frontend-backend communication with mock data",
+                    "2. Verify proper error handling on both sides",
+                    "3. Test edge cases and boundary conditions",
+                    "4. Perform end-to-end testing of the complete feature",
+                    "5. Run Vitest tests to validate component functionality"
+                ]
+            }
+        }
+        
+        # Add API-specific information if available
+        if "suggested_endpoints" in backend_guide:
+            result["api_info"] = {
+                "suggested_endpoints": backend_guide["suggested_endpoints"],
+                "relevant_tags": backend_guide.get("relevant_tags", [])
+            }
+            
+        # Add design system components if available
+        # if design_components:
+        #     result["design_components"] = design_components
+            
+        return result
+        
+    except Exception as e:
+        raise McpError(ErrorData(INTERNAL_ERROR, f"Unexpected error: {str(e)}")) from e
+
 # Helper functions for webpage fetching and parsing
 async def fetch_webpage(url: str) -> Dict[str, Any]:
     """
@@ -826,4 +1136,15 @@ app = Starlette(
 )
 
 if __name__ == "__main__":
-    uvicorn.run(app, host="localhost", port=8000)
+    # Check if a port number was provided as a command-line argument
+    if len(sys.argv) > 1:
+        try:
+            port = int(sys.argv[1])
+            print(f"Starting server on port {port}")
+        except ValueError:
+            print(f"Invalid port number: {sys.argv[1]}. Using default port 8000.")
+            port = 8000
+    else:
+        port = 8000
+        
+    uvicorn.run(app, host="localhost", port=port)
